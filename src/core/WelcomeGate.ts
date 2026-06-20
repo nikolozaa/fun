@@ -33,9 +33,12 @@ const SIGNERS: Signer[] = [
 /** Secret host token — only this opens the host/status page. */
 const HOST_TOKEN = "nikushakvelazemagaria";
 
+/** Secret admin token — opens the master enable/disable switch. */
+const ADMIN_TOKEN = "adminivarbichooe";
+
 const STORE_KEY = "crash-arcade-signatures";
 
-type SignState = { ana: boolean; elene: boolean };
+type SignState = { ana: boolean; elene: boolean; enabled: boolean };
 
 function norm(s: string): string {
   return s.trim().replace(/\s+/g, " ").toLowerCase();
@@ -45,27 +48,34 @@ function norm(s: string): string {
 
 function localState(): SignState {
   try {
-    const arr = JSON.parse(localStorage.getItem(STORE_KEY) || "[]");
-    const set = new Set(Array.isArray(arr) ? arr : []);
-    return { ana: set.has("ana"), elene: set.has("elene") };
+    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+    return {
+      ana: !!raw.ana,
+      elene: !!raw.elene,
+      enabled: raw.enabled === undefined ? true : !!raw.enabled,
+    };
   } catch {
-    return { ana: false, elene: false };
+    return { ana: false, elene: false, enabled: true };
   }
 }
 
 function saveLocal(state: SignState) {
-  try {
-    const keys = (["ana", "elene"] as const).filter((k) => state[k]);
-    localStorage.setItem(STORE_KEY, JSON.stringify(keys));
-  } catch { /* ignore */ }
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+}
+
+function normalize(data: any): SignState {
+  return {
+    ana: !!data.ana,
+    elene: !!data.elene,
+    enabled: data.enabled === undefined ? true : !!data.enabled,
+  };
 }
 
 async function fetchState(): Promise<SignState> {
   try {
     const res = await fetch("/api/signatures", { cache: "no-store" });
     if (!res.ok) throw new Error(String(res.status));
-    const data = await res.json();
-    const state = { ana: !!data.ana, elene: !!data.elene };
+    const state = normalize(await res.json());
     saveLocal(state);
     return state;
   } catch {
@@ -81,8 +91,7 @@ async function postSign(token: string): Promise<SignState> {
       body: JSON.stringify({ signer: token }),
     });
     if (!res.ok) throw new Error(String(res.status));
-    const data = await res.json();
-    const state = { ana: !!data.ana, elene: !!data.elene };
+    const state = normalize(await res.json());
     saveLocal(state);
     return state;
   } catch {
@@ -94,14 +103,36 @@ async function postSign(token: string): Promise<SignState> {
   }
 }
 
+/** Admin: flip the master enable/disable switch (shared across devices). */
+async function postAdmin(enabled: boolean): Promise<SignState> {
+  try {
+    const res = await fetch("/api/signatures", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ admin: ADMIN_TOKEN, enabled }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const state = normalize(await res.json());
+    saveLocal(state);
+    return state;
+  } catch {
+    const state = localState();
+    state.enabled = enabled;
+    saveLocal(state);
+    return state;
+  }
+}
+
 /** Show the gate, resolving once BOTH people have signed (shared store). */
 export function showWelcomeGate(): Promise<void> {
   return new Promise((resolve) => {
     const params = new URLSearchParams(window.location.search);
     const signer = SIGNERS.find((s) => s.token === params.get("signer")) ?? null;
-    const isHost = params.get("host") === HOST_TOKEN;
+    const hostParam = params.get("host");
+    const isHost = hostParam === HOST_TOKEN;
+    const isAdmin = hostParam === ADMIN_TOKEN;
 
-    let state: SignState = { ana: false, elene: false };
+    let state: SignState = { ana: false, elene: false, enabled: true };
     let pollTimer: number | undefined;
 
     const overlay = document.createElement("div");
@@ -131,7 +162,7 @@ export function showWelcomeGate(): Promise<void> {
       stopPolling();
       pollTimer = window.setInterval(async () => {
         state = await fetchState();
-        if (bothSigned()) { stopPolling(); render(); }
+        render(); // re-render so a disable / the other signature shows up
       }, 4000);
     };
 
@@ -141,9 +172,12 @@ export function showWelcomeGate(): Promise<void> {
       setTimeout(() => { overlay.remove(); resolve(); }, 450);
     };
 
-    /** Routing: signer page, host page, or locked dead-end. */
+    /** Routing: admin page, disabled wall, signer page, host page, or locked. */
     const render = () => {
       stopPolling();
+      if (isAdmin) return renderAdmin();
+      // Master switch off → nobody plays, regardless of signatures.
+      if (!state.enabled) { startPolling(); return renderDisabled(); }
       if (signer) return renderSigner(signer);
       if (isHost) return renderHost();
       return renderLocked();
@@ -279,8 +313,53 @@ export function showWelcomeGate(): Promise<void> {
         </div>`;
     }
 
-    // Locked pages need no data; signer/host pages load shared state first.
-    if (!signer && !isHost) { renderLocked(); return; }
+    /** Master switch is OFF — nobody plays (shown to signers & host). */
+    function renderDisabled() {
+      overlay.innerHTML = `
+        <div class="gate-card">
+          <div class="gate-emoji">⛔</div>
+          <h1 class="gate-title">GAMES CLOSED</h1>
+          <p class="gate-debt">The arcade is currently <b>disabled</b> by the host. Check back later.</p>
+          <button class="gate-switch" id="refresh">↻ Check again</button>
+        </div>`;
+      overlay.querySelector<HTMLButtonElement>("#refresh")!
+        .addEventListener("click", async () => { state = await fetchState(); render(); });
+    }
+
+    /** Admin page (?host=adminivarbichooe): master enable / disable switch. */
+    function renderAdmin() {
+      const on = state.enabled;
+      overlay.innerHTML = `
+        <div class="gate-card">
+          <div class="gate-emoji">🛠️</div>
+          <h1 class="gate-title">ADMIN</h1>
+          <p class="gate-debt">
+            Master switch. When <b>disabled</b>, nobody can play — even if both signed.
+          </p>
+          <div class="gate-progress">
+            <span class="gate-chip ${on ? "done" : ""}">${on ? "🟢 ENABLED" : "🔴 DISABLED"}</span>
+          </div>
+          ${statusChips()}
+          <button class="gate-enter" id="enableBtn" ${on ? 'style="opacity:.5"' : ""}>✅ ENABLE ACCESS</button>
+          <button class="gate-switch" id="disableBtn">⛔ DISABLE ACCESS</button>
+          <p class="gate-fine">Changes apply to everyone's device within a few seconds.</p>
+        </div>`;
+      const setBusy = (b: boolean) => {
+        for (const id of ["enableBtn", "disableBtn"]) {
+          const el = overlay.querySelector<HTMLButtonElement>("#" + id)!;
+          if (b) el.setAttribute("disabled", "true"); else el.removeAttribute("disabled");
+        }
+      };
+      overlay.querySelector<HTMLButtonElement>("#enableBtn")!.addEventListener("click", async () => {
+        setBusy(true); state = await postAdmin(true); render();
+      });
+      overlay.querySelector<HTMLButtonElement>("#disableBtn")!.addEventListener("click", async () => {
+        setBusy(true); state = await postAdmin(false); render();
+      });
+    }
+
+    // Locked pages need no data; signer/host/admin pages load shared state first.
+    if (!signer && !isHost && !isAdmin) { renderLocked(); return; }
     overlay.innerHTML = `<div class="gate-card"><div class="gate-emoji">🍺</div>
       <p class="gate-instructions">Loading…</p></div>`;
     fetchState().then((s) => { state = s; render(); });
