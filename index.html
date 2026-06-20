@@ -9,6 +9,86 @@
       html, body { height: 100%; background: #0a0a14; overflow: hidden; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
       #app { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
       canvas { display: block; }
+
+      /* --- Welcome / signature gate overlay --- */
+      .gate-overlay {
+        position: fixed; inset: 0; z-index: 100;
+        display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(120% 120% at 50% 0%, #2a1140 0%, #0a0a14 60%);
+        padding: 24px; transition: opacity .45s ease;
+      }
+      .gate-overlay.gate-leaving { opacity: 0; pointer-events: none; }
+      .gate-card {
+        width: min(560px, 100%);
+        background: rgba(20, 20, 38, 0.96);
+        border: 2px solid rgba(177, 77, 255, 0.55);
+        border-radius: 22px;
+        padding: 36px 40px 28px;
+        box-shadow: 0 24px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.03) inset;
+        color: #fff; text-align: center;
+      }
+      .gate-emoji { font-size: 52px; line-height: 1; margin-bottom: 6px; }
+      .gate-title {
+        font-size: 30px; font-weight: 900; letter-spacing: 2px; margin-bottom: 16px;
+        background: linear-gradient(90deg, #ff8fc0, #b14dff); -webkit-background-clip: text;
+        background-clip: text; color: transparent;
+      }
+      .gate-debt {
+        font-size: 17px; line-height: 1.5; color: #e7defb;
+        background: rgba(177,77,255,.12); border: 1px solid rgba(177,77,255,.25);
+        border-radius: 12px; padding: 14px 16px; margin-bottom: 18px;
+      }
+      .gate-debt b { color: #ffd06b; }
+      .gate-instructions { font-size: 15px; color: #b9b0d6; margin-bottom: 18px; }
+      .gate-progress { display: flex; gap: 12px; justify-content: center; margin-bottom: 18px; }
+      .gate-chip {
+        font-size: 14px; font-weight: 700; padding: 6px 14px; border-radius: 999px;
+        background: rgba(255,255,255,.05); border: 1px solid #34344f; color: #9a93b8;
+      }
+      .gate-chip.current { border-color: #b14dff; color: #e7defb; box-shadow: 0 0 0 2px rgba(177,77,255,.2); }
+      .gate-chip.done { border-color: #4ade80; color: #4ade80; background: rgba(74,222,128,.1); }
+      .gate-switch {
+        display: block; width: 100%; margin-top: 4px; padding: 9px;
+        background: transparent; border: 1px solid #34344f; border-radius: 10px;
+        color: #b9b0d6; font-size: 14px; font-weight: 600; cursor: pointer; transition: border-color .15s, color .15s;
+      }
+      .gate-switch:hover { border-color: #b14dff; color: #fff; }
+      .gate-link-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; text-align: left; }
+      .gate-link-name { min-width: 70px; font-weight: 800; font-size: 15px; color: #e7defb; }
+      .gate-status {
+        flex: 1; text-align: right; font-size: 14px; font-weight: 700; letter-spacing: .3px;
+        color: #9a93b8; text-transform: uppercase;
+      }
+      .gate-status.done { color: #4ade80; }
+      .gate-field { display: block; text-align: left; margin-bottom: 16px; }
+      .gate-field span {
+        display: block; font-size: 13px; font-weight: 700; letter-spacing: .5px;
+        color: #c9bdf0; margin-bottom: 6px; text-transform: uppercase;
+      }
+      .gate-field input {
+        width: 100%; padding: 13px 16px; font-size: 18px; font-weight: 600;
+        font-style: italic; font-family: "Segoe Script", "Bradley Hand", cursive, sans-serif;
+        color: #fff; background: #0c0c18; border: 2px solid #34344f;
+        border-radius: 12px; outline: none; transition: border-color .15s, box-shadow .15s;
+      }
+      .gate-field input:focus { border-color: #b14dff; box-shadow: 0 0 0 3px rgba(177,77,255,.25); }
+      .gate-field input.good { border-color: #4ade80; box-shadow: 0 0 0 3px rgba(74,222,128,.2); }
+      .gate-error { min-height: 20px; color: #ff6b81; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+      .gate-enter {
+        width: 100%; padding: 15px; font-size: 18px; font-weight: 800; letter-spacing: 1px;
+        color: #1a1023; background: linear-gradient(90deg, #ffd06b, #ff9ec8);
+        border: none; border-radius: 12px; cursor: pointer; transition: transform .1s, filter .15s;
+      }
+      .gate-enter:hover { filter: brightness(1.07); }
+      .gate-enter:active { transform: scale(.98); }
+      .gate-fine { font-size: 12px; color: #7a7398; margin-top: 12px; }
+      .shake { animation: gate-shake .4s; }
+      @keyframes gate-shake {
+        10%, 90% { transform: translateX(-2px); }
+        20%, 80% { transform: translateX(4px); }
+        30%, 50%, 70% { transform: translateX(-7px); }
+        40%, 60% { transform: translateX(7px); }
+      }
     </style>
   </head>
   <body>

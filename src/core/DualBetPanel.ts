@@ -76,6 +76,14 @@ export class DualBetPanel {
     for (const s of this.slots) s.setState(state);
   }
 
+  /**
+   * Push the current round multiplier to both slots so each live bet's button
+   * shows its potential cash-out (stake × multiplier). Call every frame.
+   */
+  setMultiplier(multi: number) {
+    for (const s of this.slots) s.setMultiplier(multi);
+  }
+
   /** Run a callback for each slot index. */
   forEach(fn: (slot: number) => void) {
     this.slots.forEach((_, i) => fn(i));

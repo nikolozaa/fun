@@ -39,8 +39,13 @@ export interface ButtonOpts {
   onClick: () => void;
 }
 
-export function makeButton(opts: ButtonOpts): Container {
-  const c = new Container();
+/** A button container whose text label can be updated live via `setLabel`. */
+export interface ButtonContainer extends Container {
+  setLabel(text: string): void;
+}
+
+export function makeButton(opts: ButtonOpts): ButtonContainer {
+  const c = new Container() as ButtonContainer;
   c.eventMode = "static";
   c.cursor = "pointer";
 
@@ -60,6 +65,7 @@ export function makeButton(opts: ButtonOpts): Container {
   label.anchor.set(0.5);
   label.position.set(opts.width / 2, opts.height / 2);
   c.addChild(label);
+  c.setLabel = (text: string) => { label.text = text; };
 
   c.on("pointerover", () => draw(opts.fill, 0.82));
   c.on("pointerout", () => draw(opts.fill, 1));

@@ -1,5 +1,5 @@
 import { Container, Graphics } from "pixi.js";
-import { makeText, makeButton, wallet, clamp } from "./utils";
+import { makeText, makeButton, wallet, clamp, type ButtonContainer } from "./utils";
 import { GAME_WIDTH, GAME_HEIGHT } from "./types";
 
 export type RoundState = "betting" | "running" | "crashed";
@@ -31,11 +31,13 @@ export class BetPanel {
   private state: RoundState = "betting";
   private accent: number;
   private layout: BetPanelLayout;
+  /** Live potential cash-out (bet × current multiplier) while running. */
+  private potential = 0;
 
   private balanceText = makeText("", { fill: 0xffffff, fontSize: 18, fontWeight: "700" });
   private betText = makeText("", { fill: 0xffffff, fontSize: 24, fontWeight: "800" });
   private titleText = makeText("", { fill: 0xffffff, fontSize: 14, fontWeight: "700" });
-  private mainButton!: Container;
+  private mainButton!: ButtonContainer;
   private buttonHolder = new Container();
   private hooks: BetPanelHooks;
 
@@ -123,7 +125,7 @@ export class BetPanel {
     this.buttonHolder.removeChildren();
     let label = "PLACE BET";
     let fill = this.accent;
-    if (this.state === "running") { label = "CASH OUT"; fill = 0xf2b705; }
+    if (this.state === "running") { label = this.cashOutLabel(); fill = 0xf2b705; }
     if (this.state === "crashed") { label = "BUSTED"; fill = 0x802030; }
 
     const { width: panelW } = this.layout;
@@ -132,6 +134,20 @@ export class BetPanel {
       onClick: () => this.handleMain(),
     });
     this.buttonHolder.addChild(this.mainButton);
+  }
+
+  /** Label for the live cash-out button, showing the current potential win. */
+  private cashOutLabel(): string {
+    return `CASH OUT  $${this.potential.toFixed(2)}`;
+  }
+
+  /**
+   * Push the current round multiplier so the running button shows the live
+   * potential cash-out (stake × multiplier). Call every frame while running.
+   */
+  setMultiplier(multi: number) {
+    this.potential = this.betAmount * multi;
+    if (this.state === "running") this.mainButton.setLabel(this.cashOutLabel());
   }
 
   private handleMain() {

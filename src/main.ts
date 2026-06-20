@@ -3,6 +3,7 @@ import { GAME_WIDTH, GAME_HEIGHT, type Game, type GameDescriptor } from "./core/
 import { Menu } from "./core/Menu";
 import { CrashRaceGame } from "./games/CrashRace";
 import { AviatorGame } from "./games/Aviator";
+import { showWelcomeGate } from "./core/WelcomeGate";
 
 const GAMES: GameDescriptor[] = [
   {
@@ -78,4 +79,6 @@ async function bootstrap() {
   showMenu();
 }
 
-bootstrap();
+// Gate the arcade behind the signature screen: the games only load once both
+// Ana and Elene have signed off on the beer they owe.
+showWelcomeGate().then(bootstrap);

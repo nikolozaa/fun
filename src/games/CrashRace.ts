@@ -6,7 +6,12 @@ import { makeBackButton } from "../core/Hud";
 import { rand, sampleCrashPoint } from "../core/utils";
 import { Car } from "./Car";
 
-type Phase = "idle" | "racing" | "leadCrashed" | "pileup" | "done";
+type Phase = "betting" | "racing" | "leadCrashed" | "pileup" | "done" | "pause";
+
+/** Seconds in the open betting window before a round auto-launches. */
+const BET_WINDOW = 5;
+/** Seconds to wait after a round ends before the next betting window opens. */
+const PAUSE_AFTER = 5;
 
 /**
  * Crash Race: a lead car drives ahead while the player's chaser follows.
@@ -37,11 +42,15 @@ export class CrashRaceGame implements Game {
   private statusText = makeText("", { fill: 0xff4d6d, fontSize: 30, fontWeight: "700" });
   private panel: DualBetPanel;
 
-  private phase: Phase = "idle";
+  private phase: Phase = "betting";
   private multi = 1;
   private crashPoint = 2;
   /** Per-slot: has this bet already been resolved (cashed out or busted)? */
   private resolved = [true, true];
+  /** Counts down the betting window; at 0 the race launches. */
+  private betTimer = BET_WINDOW;
+  /** Counts down the post-round pause before the next betting window. */
+  private pauseTimer = 0;
   private scrollSpeed = 0;
   private pileupTimer = 0;
   private restartTimer = 0;
@@ -274,15 +283,31 @@ export class CrashRaceGame implements Game {
   }
 
   start(): void {
-    this.statusText.text = "Place up to two bets to start the race";
+    this.openBetting();
   }
 
-  /** A bet was placed in a slot. Starts the race if it isn't running yet. */
+  /** Open a fresh betting window; bets are only accepted while it counts down. */
+  private openBetting() {
+    this.phase = "betting";
+    this.betTimer = BET_WINDOW;
+    this.multi = 1;
+    this.explosion.visible = false;
+    this.multiText.text = "1.00×";
+    this.multiText.style.fill = 0xffffff;
+    this.resolved = [true, true];
+    this.panel.setStateAll("betting");
+    // Cars staged at the start line, ready to launch.
+    this.leadCar.reset();
+    this.chaseCar.reset();
+    this.leadDepth = CrashRaceGame.LEAD_DEPTH;
+    this.chaseDepth = CrashRaceGame.CHASE_DEPTH;
+    this.placeCars();
+  }
+
+  /** A bet was placed in a slot. Only allowed during the betting window. */
   private placeBet(slot: number): boolean {
-    // Bets only open during the idle/racing window, before the lead wrecks.
-    if (this.phase !== "idle" && this.phase !== "racing") return false;
+    if (this.phase !== "betting") return false;
     this.resolved[slot] = false;
-    if (this.phase === "idle") this.beginRound();
     return true;
   }
 
@@ -313,6 +338,30 @@ export class CrashRaceGame implements Game {
   }
 
   update(dt: number): void {
+    if (this.phase === "betting") {
+      this.betTimer -= dt;
+      const secs = Math.max(0, Math.ceil(this.betTimer));
+      this.statusText.text = `Place your bets — race starts in ${secs}s`;
+      this.statusText.style.fill = 0xffffff;
+      // A just-placed bet shows its base potential (stake × 1.00).
+      this.panel.setMultiplier(1);
+      this.drawDashes();
+      this.drawSpeedLines(0);
+      if (this.betTimer <= 0) this.beginRound();
+      return;
+    }
+
+    if (this.phase === "pause") {
+      this.pauseTimer -= dt;
+      const secs = Math.max(0, Math.ceil(this.pauseTimer));
+      this.statusText.text = `Next race in ${secs}s`;
+      this.statusText.style.fill = 0xffffff;
+      this.drawDashes();
+      this.drawSpeedLines(0);
+      if (this.pauseTimer <= 0) this.openBetting();
+      return;
+    }
+
     const moving = this.phase === "racing" || this.phase === "leadCrashed";
 
     // Scroll dashes toward the viewer (depth 0→1) and animate speed lines.
@@ -332,6 +381,8 @@ export class CrashRaceGame implements Game {
     if (this.phase === "racing") {
       // Multiplier grows; rate accelerates the higher it climbs.
       this.multi += dt * (0.6 + this.multi * 0.35);
+      // Update each live bet's button with its potential cash-out.
+      this.panel.setMultiplier(this.multi);
       this.multiText.text = `${this.multi.toFixed(2)}×`;
       const t = Math.min((this.multi - 1) / 6, 1);
       this.multiText.style.fill = interpColor(0xffffff, 0xff4d6d, t);
@@ -356,7 +407,10 @@ export class CrashRaceGame implements Game {
 
     if (this.phase === "done") {
       this.restartTimer -= dt;
-      if (this.restartTimer <= 0) this.resetForNext();
+      if (this.restartTimer <= 0) {
+        this.phase = "pause";
+        this.pauseTimer = PAUSE_AFTER;
+      }
     }
   }
 
@@ -432,23 +486,6 @@ export class CrashRaceGame implements Game {
         .closePath()
         .fill({ color: 0xffb703, alpha: (1 - t) * 0.7 });
     }
-  }
-
-  private resetForNext() {
-    this.phase = "idle";
-    this.explosion.visible = false;
-    this.leadCar.reset();
-    this.chaseCar.reset();
-    this.leadDepth = CrashRaceGame.LEAD_DEPTH;
-    this.chaseDepth = CrashRaceGame.CHASE_DEPTH;
-    this.placeCars();
-    this.multi = 1;
-    this.multiText.text = "1.00×";
-    this.multiText.style.fill = 0xffffff;
-    this.statusText.text = "Place up to two bets to start the race";
-    this.statusText.style.fill = 0xff4d6d;
-    this.resolved = [true, true];
-    this.panel.setStateAll("betting");
   }
 
   destroy(): void {
