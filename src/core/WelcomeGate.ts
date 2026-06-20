@@ -3,80 +3,86 @@
  * their own name to acknowledge a friendly debt of 5 litres of draught Paulaner
  * beer owed to the host.
  *
- * Signing is split by URL so nobody can sign for the other person:
- *   ?signer=ana    → only Ana's signature box
- *   ?signer=elene  → only Elene's signature box
- *   (no/invalid)   → a landing page with both links to share + status
+ * No backend / no database — it works across devices via a "code relay":
+ *   1. Ana opens HER link, signs → the page shows a CODE she sends to the host.
+ *   2. Elene opens HER link, signs → shows a CODE she sends to the host.
+ *   3. The host opens the plain page, pastes BOTH codes → the games unlock.
  *
- * A completed signature is saved to localStorage, so signing persists: if Elene
- * signs on her link but Ana hasn't on hers, the games stay locked until Ana
- * signs too. Only when BOTH are signed does the gate open.
+ * Each code is a signed token (hash of a shared secret + the signer), so it
+ * can't be forged by just typing a name — only that person's link can mint a
+ * valid code. Once both valid codes are entered they're saved to localStorage
+ * so the host doesn't re-enter them.
  *
- * Built as a plain HTML overlay because it needs real text inputs, which Pixi
- * does not provide natively.
+ * Signing is split by a secret URL token so nobody can sign for the other:
+ *   ?signer=anushkushkushka  → Ana's signing page (shows Ana's code)
+ *   ?signer=elenikobeleniko  → Elene's signing page (shows Elene's code)
+ *   (no/invalid)             → the host page to paste both codes
  */
 
 interface Signer {
-  /** Stable key used for persistence. */
-  key: string;
-  /** Secret token that goes in the ?signer= link sent to this person. */
+  key: "ana" | "elene";
+  /** Secret token in this person's personal ?signer= link. */
   token: string;
-  /** First name, for headings/buttons. */
+  /** Prefix shown on their relay code, e.g. "ANA". */
+  prefix: string;
   first: string;
-  /** Exact full name the person must type. */
   full: string;
 }
 
-// The `token` is the secret in each person's personal link — hand the matching
-// link to the right person:
-//   ?signer=anushkushkushka  → Ana
-//   ?signer=elenikobeleniko  → Elene
 const SIGNERS: Signer[] = [
-  { key: "ana", token: "anushkushkushka", first: "Ana", full: "Ana Khuskivadze" },
-  { key: "elene", token: "elenikobeleniko", first: "Elene", full: "Elene Turmanidze" },
+  { key: "ana", token: "anushkushkushka", prefix: "ANA", first: "Ana", full: "Ana Khuskivadze" },
+  { key: "elene", token: "elenikobeleniko", prefix: "ELE", first: "Elene", full: "Elene Turmanidze" },
 ];
 
-const STORE_KEY = "crash-arcade-signatures";
+/** Shared secret folded into every code so codes can't be guessed. */
+const CODE_SECRET = "paulaner-5-litres-2026";
+const STORE_KEY = "crash-arcade-unlocked";
 
-/** Normalize a signature for comparison: trim + collapse spaces + lowercase. */
+/**
+ * Secret host token. The code-entry page only appears at
+ *   ?host=nikushakvelazemagaria
+ * Anyone opening the plain URL (or a wrong path) hits a locked dead-end.
+ */
+const HOST_TOKEN = "nikushakvelazemagaria";
+
 function norm(s: string): string {
   return s.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-/** Read the set of signer keys that have already signed (persisted). */
-function loadSigned(): Set<string> {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(arr) ? arr : []);
-  } catch {
-    return new Set();
-  }
+/** Small deterministic string hash (djb2), returned as base-36. */
+function hash(str: string): string {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h.toString(36).padStart(7, "0");
 }
 
-function saveSigned(signed: Set<string>) {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify([...signed]));
-  } catch {
-    /* ignore storage failures — gate just won't persist */
-  }
+/** The valid relay code for a given signer (e.g. "ANA-x1y2z3q"). */
+function codeFor(s: Signer): string {
+  return `${s.prefix}-${hash(CODE_SECRET + "|" + s.key)}`;
 }
 
-/**
- * Show the gate, returning a promise that resolves once BOTH people have
- * signed (across visits, via saved signatures).
- */
+/** Does a pasted string match a given signer's valid code (case-insensitive)? */
+function codeValid(s: Signer, entered: string): boolean {
+  return entered.trim().toUpperCase() === codeFor(s).toUpperCase();
+}
+
+function alreadyUnlocked(): boolean {
+  try { return localStorage.getItem(STORE_KEY) === "yes"; } catch { return false; }
+}
+function rememberUnlocked() {
+  try { localStorage.setItem(STORE_KEY, "yes"); } catch { /* ignore */ }
+}
+
+/** Show the gate, resolving once both valid codes are present. */
 export function showWelcomeGate(): Promise<void> {
   return new Promise((resolve) => {
-    const signed = loadSigned();
-    const param = new URLSearchParams(window.location.search).get("signer");
-    const signer = SIGNERS.find((s) => s.token === param) ?? null;
+    const params = new URLSearchParams(window.location.search);
+    const signer = SIGNERS.find((s) => s.token === params.get("signer")) ?? null;
+    const isHost = params.get("host") === HOST_TOKEN;
 
     const overlay = document.createElement("div");
     overlay.className = "gate-overlay";
     document.body.appendChild(overlay);
-
-    const bothSigned = () => SIGNERS.every((s) => signed.has(s.key));
 
     const debtBlock = `
       <p class="gate-debt">
@@ -84,63 +90,58 @@ export function showWelcomeGate(): Promise<void> {
         acknowledge that they owe <b>5 litres of draught Paulaner beer</b>.
       </p>`;
 
-    const statusChips = () => `
-      <div class="gate-progress">
-        ${SIGNERS.map((s) => `
-          <span class="gate-chip ${signed.has(s.key) ? "done" : ""}">
-            ${signed.has(s.key) ? "✓" : "•"} ${s.first}
-          </span>`).join("")}
-      </div>`;
-
-    /** Decide what to show: a person's signing step, the share page, or done. */
-    const render = () => {
-      if (bothSigned()) return renderDone();
-      if (signer) return renderSign(signer);
-      return renderShare();
+    const enter = () => {
+      rememberUnlocked();
+      overlay.classList.add("gate-leaving");
+      setTimeout(() => { overlay.remove(); resolve(); }, 450);
     };
 
-    /** A single person's signing step (only their own box). */
-    const renderSign = (s: Signer) => {
-      const alreadyMe = signed.has(s.key);
+    // Routing:
+    //   ?signer=<token>  → that person's signing page (mints their code)
+    //   ?host=<token>    → the host code-entry page (or already-unlocked skip)
+    //   anything else    → a locked dead-end (plain URL reveals nothing)
+    if (signer) {
+      renderSign(signer);
+    } else if (isHost) {
+      if (alreadyUnlocked()) renderDone();
+      else renderHost();
+    } else {
+      renderLocked();
+    }
+
+    /** A person signs on their own link, then gets a code to send the host. */
+    function renderSign(s: Signer) {
       const other = SIGNERS.find((o) => o.key !== s.key)!;
       overlay.innerHTML = `
         <div class="gate-card">
           <div class="gate-emoji">🍺</div>
           <h1 class="gate-title">${s.first.toUpperCase()}'S SIGNATURE</h1>
           ${debtBlock}
-          ${statusChips()}
-          ${alreadyMe
-            ? `<p class="gate-instructions">You've already signed, ${s.first}. Waiting for <b>${other.first}</b> to sign on their own link.</p>`
-            : `<p class="gate-instructions"><b>${s.first}</b>, sign your full name below.</p>
-               <label class="gate-field">
-                 <span>Signature — ${s.full}</span>
-                 <input id="sig" type="text" autocomplete="off" spellcheck="false" placeholder="${s.full}" />
-               </label>
-               <div class="gate-error" id="gateError"></div>
-               <button class="gate-enter" id="gateSign">SIGN AS ${s.first.toUpperCase()} 🖊️</button>`}
-          <p class="gate-fine">This link only signs for ${s.first}. ${other.first} must sign on their own link. Uppercase / lowercase doesn't matter.</p>
+          <p class="gate-instructions"><b>${s.first}</b>, sign your full name below.</p>
+          <label class="gate-field">
+            <span>Signature — ${s.full}</span>
+            <input id="sig" type="text" autocomplete="off" spellcheck="false" placeholder="${s.full}" />
+          </label>
+          <div class="gate-error" id="gateError"></div>
+          <button class="gate-enter" id="gateSign">SIGN AS ${s.first.toUpperCase()} 🖊️</button>
+          <p class="gate-fine">This link only signs for ${s.first}. Uppercase / lowercase doesn't matter.</p>
         </div>`;
 
-      if (alreadyMe) return;
       const input = overlay.querySelector<HTMLInputElement>("#sig")!;
       const errorEl = overlay.querySelector<HTMLDivElement>("#gateError")!;
       const signBtn = overlay.querySelector<HTMLButtonElement>("#gateSign")!;
       const matches = () => norm(input.value) === norm(s.full);
 
       const attempt = () => {
-        if (matches()) {
-          signed.add(s.key);
-          saveSigned(signed);
-          render();
+        if (!matches()) {
+          errorEl.textContent = input.value
+            ? `That doesn't match "${s.full}".`
+            : `${s.first}, type your full name to sign.`;
+          const card = overlay.querySelector(".gate-card") as HTMLElement;
+          card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
           return;
         }
-        errorEl.textContent = input.value
-          ? `That doesn't match "${s.full}".`
-          : `${s.first}, type your full name to sign.`;
-        const card = overlay.querySelector(".gate-card") as HTMLElement;
-        card.classList.remove("shake");
-        void card.offsetWidth;
-        card.classList.add("shake");
+        showCode(s, other);
       };
 
       signBtn.addEventListener("click", attempt);
@@ -150,47 +151,102 @@ export function showWelcomeGate(): Promise<void> {
       });
       input.addEventListener("keydown", (e) => { if (e.key === "Enter") attempt(); });
       input.focus();
-    };
+    }
 
-    /** Landing page (no ?signer=): show each person's personal link + status. */
-    const renderShare = () => {
+    /** After signing: show the code to copy + send to the host. */
+    function showCode(s: Signer, other: Signer) {
+      const code = codeFor(s);
+      overlay.innerHTML = `
+        <div class="gate-card">
+          <div class="gate-emoji">✅</div>
+          <h1 class="gate-title">SIGNED, ${s.first.toUpperCase()}!</h1>
+          <p class="gate-debt">Send this code to the host to confirm your signature:</p>
+          <div class="gate-code" id="codeBox">${code}</div>
+          <button class="gate-enter" id="copyBtn">📋 Copy code</button>
+          <p class="gate-fine">The host enters your code and ${other.first}'s to unlock the games.</p>
+        </div>`;
+      const copyBtn = overlay.querySelector<HTMLButtonElement>("#copyBtn")!;
+      copyBtn.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(code); copyBtn.textContent = "✓ Copied!"; }
+        catch { copyBtn.textContent = "Select & copy the code above"; }
+      });
+    }
+
+    /** Host page: paste both codes to unlock. */
+    function renderHost() {
       overlay.innerHTML = `
         <div class="gate-card">
           <div class="gate-emoji">🍺</div>
           <h1 class="gate-title">WELCOME TO CRASH ARCADE</h1>
           ${debtBlock}
-          ${statusChips()}
-          <p class="gate-instructions">Each person signs on their <b>own</b> private link.</p>
-          ${SIGNERS.map((s) => `
-            <div class="gate-link-row">
-              <span class="gate-link-name">${s.first}</span>
-              <span class="gate-status ${signed.has(s.key) ? "done" : ""}">
-                ${signed.has(s.key) ? "✓ signed" : "awaiting signature"}
-              </span>
-            </div>`).join("")}
-          <p class="gate-fine">Both must sign on their own links before anyone can play.</p>
+          <p class="gate-instructions">Enter the codes Ana &amp; Elene sent you after signing:</p>
+          <label class="gate-field">
+            <span>Ana's code</span>
+            <input id="codeAna" type="text" autocomplete="off" spellcheck="false" placeholder="ANA-xxxxxxx" />
+          </label>
+          <label class="gate-field">
+            <span>Elene's code</span>
+            <input id="codeElene" type="text" autocomplete="off" spellcheck="false" placeholder="ELE-xxxxxxx" />
+          </label>
+          <div class="gate-error" id="gateError"></div>
+          <button class="gate-enter" id="unlockBtn">UNLOCK THE ARCADE 🎮</button>
+          <p class="gate-fine">Both codes are required. Each person's code only comes from their own signing link.</p>
         </div>`;
-    };
 
-    /** Both have signed — show the unlock button. */
-    const renderDone = () => {
+      const aEl = overlay.querySelector<HTMLInputElement>("#codeAna")!;
+      const eEl = overlay.querySelector<HTMLInputElement>("#codeElene")!;
+      const errorEl = overlay.querySelector<HTMLDivElement>("#gateError")!;
+      const btn = overlay.querySelector<HTMLButtonElement>("#unlockBtn")!;
+      const ana = SIGNERS[0], elene = SIGNERS[1];
+
+      const mark = () => {
+        aEl.classList.toggle("good", codeValid(ana, aEl.value));
+        eEl.classList.toggle("good", codeValid(elene, eEl.value));
+      };
+
+      const attempt = () => {
+        const okA = codeValid(ana, aEl.value);
+        const okE = codeValid(elene, eEl.value);
+        if (okA && okE) { enter(); return; }
+        if (!aEl.value && !eEl.value) errorEl.textContent = "Enter both codes.";
+        else if (!okA && !okE) errorEl.textContent = "Neither code is valid.";
+        else if (!okA) errorEl.textContent = "Ana's code isn't valid.";
+        else errorEl.textContent = "Elene's code isn't valid.";
+        const card = overlay.querySelector(".gate-card") as HTMLElement;
+        card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+      };
+
+      btn.addEventListener("click", attempt);
+      for (const el of [aEl, eEl]) {
+        el.addEventListener("input", () => { errorEl.textContent = ""; mark(); });
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") attempt(); });
+      }
+      aEl.focus();
+    }
+
+    /** Already unlocked on this device — quick "enter" screen. */
+    function renderDone() {
       overlay.innerHTML = `
         <div class="gate-card">
           <div class="gate-emoji">🍻</div>
           <h1 class="gate-title">BOTH SIGNED!</h1>
           <p class="gate-debt">
-            <b>Ana</b> &amp; <b>Elene</b> have signed — that's
-            <b>5 litres of draught Paulaner beer</b> on the tab. Cheers!
+            <b>Ana</b> &amp; <b>Elene</b> owe <b>5 litres of draught Paulaner beer</b>. Cheers!
           </p>
-          ${statusChips()}
           <button class="gate-enter" id="gateEnter">ENTER THE ARCADE 🎮</button>
         </div>`;
-      overlay.querySelector<HTMLButtonElement>("#gateEnter")!.addEventListener("click", () => {
-        overlay.classList.add("gate-leaving");
-        setTimeout(() => { overlay.remove(); resolve(); }, 450);
-      });
-    };
+      overlay.querySelector<HTMLButtonElement>("#gateEnter")!.addEventListener("click", enter);
+    }
 
-    render();
+    /** Dead-end for the plain URL / wrong path — reveals nothing useful. */
+    function renderLocked() {
+      overlay.innerHTML = `
+        <div class="gate-card">
+          <div class="gate-emoji">🔒</div>
+          <h1 class="gate-title">PRIVATE</h1>
+          <p class="gate-debt">This is a private arcade. Access is by personal link only.</p>
+          <p class="gate-fine">If you were given a link, open that exact link to continue.</p>
+        </div>`;
+    }
   });
 }
